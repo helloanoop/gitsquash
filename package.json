@@ -1,6 +1,6 @@
 {
   "name": "gitsquash",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Interactive CLI tool to squash git commits",
   "main": "src/index.js",
   "bin": {
