@@ -77,7 +77,7 @@ async function squashNonConsecutiveCommits(commits, message) {
   const tempBranch = `temp-squash-${Date.now()}`;
   
   // Get all commits after our newest selected commit
-  console.log(chalk.blue('Identifying commits to preserve...'));
+  console.log(chalk.yellow('\n🔍 Phase 1: Analyzing commits...'));
   const newestSelectedCommit = commits[0];
   const log = await git.log();
   const laterCommits = [];
@@ -85,61 +85,79 @@ async function squashNonConsecutiveCommits(commits, message) {
     if (commit.hash === newestSelectedCommit) {
       break;
     }
-    laterCommits.push(commit.hash);
+    laterCommits.push({ hash: commit.hash, message: commit.message.split('\n')[0] });
   }
+  console.log(chalk.dim(`  Found ${laterCommits.length} newer commits to preserve`));
 
+  console.log(chalk.yellow('\n📦 Phase 2: Preparing workspace...'));
+  console.log(chalk.dim(`  Creating temporary branch: ${tempBranch}`));
   await git.checkout(['-b', tempBranch]);
 
   try {
-    console.log(chalk.blue('Resetting to the commit before our earliest commit...'));
+    console.log(chalk.yellow('\n🔄 Phase 3: Reconstructing history...'));
     const oldestCommit = commits[commits.length - 1];
+    console.log(chalk.dim(`  Resetting to parent of ${oldestCommit.slice(0, 7)}`));
     await git.reset(['--hard', `${oldestCommit}~1`]);
 
     // Cherry pick all commits in order
-    console.log(chalk.blue('Cherry picking commits...'));
+    console.log(chalk.magenta('\n  🍒 Cherry picking selected commits:'));
     for (const commit of commits.reverse()) {
-      console.log(chalk.blue(`  Cherry picking commit ${commit}...`));
+      const shortHash = commit.slice(0, 7);
+      process.stdout.write(chalk.dim(`    Processing ${shortHash}... `));
       await git.raw(['cherry-pick', commit]);
+      console.log(chalk.green('✓'));
     }
 
     // Now squash all the commits
-    console.log(chalk.blue('Squashing commits...'));
+    console.log(chalk.magenta('\n  💼 Creating squashed commit:'));
+    console.log(chalk.dim(`    Resetting to parent of ${oldestCommit.slice(0, 7)}`));
     await git.reset(['--soft', `${oldestCommit}~1`]);
+    process.stdout.write(chalk.dim('    Creating new commit... '));
     await git.commit(message);
+    console.log(chalk.green('✓'));
 
     // Get the new commit hash
-    console.log(chalk.blue('Getting the new commit hash...'));
     const newCommit = await git.revparse(['HEAD']);
+    const shortNewCommit = newCommit.slice(0, 7);
+    console.log(chalk.dim(`    New commit hash: ${shortNewCommit}`));
 
-    // Go back to original branch
-    console.log(chalk.blue('Going back to original branch...'));
+    console.log(chalk.yellow('\n🔄 Phase 4: Applying changes to main branch...'));
+    console.log(chalk.dim(`  Switching back to ${currentBranch}`));
     await git.checkout([currentBranch]);
 
-    // Reset to the commit before our earliest commit
-    console.log(chalk.blue('Resetting to the commit before our earliest commit...'));
+    console.log(chalk.dim(`  Resetting to parent of ${oldestCommit.slice(0, 7)}`));
     await git.reset(['--hard', `${oldestCommit}~1`]);
 
-    // Cherry pick our new squashed commit
-    console.log(chalk.blue('Cherry picking our new squashed commit...'));
+    process.stdout.write(chalk.dim(`  Applying squashed commit ${shortNewCommit}... `));
     await git.raw(['cherry-pick', newCommit]);
+    console.log(chalk.green('✓'));
 
     // Now cherry pick all the later commits back on top
     if (laterCommits.length > 0) {
-      console.log(chalk.blue('Restoring newer commits...'));
+      console.log(chalk.magenta('\n  🔄 Restoring newer commits:'));
       for (const commit of laterCommits.reverse()) {
-        console.log(chalk.blue(`  Restoring commit ${commit}...`));
-        await git.raw(['cherry-pick', commit]);
+        const shortHash = commit.hash.slice(0, 7);
+        process.stdout.write(chalk.dim(`    ${shortHash} ${commit.message}... `));
+        await git.raw(['cherry-pick', commit.hash]);
+        console.log(chalk.green('✓'));
       }
     }
 
     // Clean up: delete temporary branch
-    console.log(chalk.blue('Deleting temporary branch...'));
+    console.log(chalk.yellow('\n🧹 Phase 5: Cleanup'));
+    process.stdout.write(chalk.dim(`  Removing temporary branch ${tempBranch}... `));
     await git.branch(['-D', tempBranch]);
+    console.log(chalk.green('✓'));
+
   } catch (error) {
     // If something goes wrong, try to cleanup
-    console.log(chalk.blue('Squash failed. Cleaning up...'));
+    console.log(chalk.red('\n❌ Error: Squash failed!'));
+    console.log(chalk.yellow('🧹 Cleaning up...'));
+    console.log(chalk.dim(`  Switching back to ${currentBranch}`));
     await git.checkout([currentBranch]);
+    process.stdout.write(chalk.dim(`  Removing temporary branch ${tempBranch}... `));
     await git.branch(['-D', tempBranch]).catch(() => {});
+    console.log(chalk.green('✓'));
     throw error;
   }
 }
