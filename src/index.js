@@ -162,54 +162,40 @@ async function squashNonConsecutiveCommits(commits, message) {
   }
 }
 
-async function areCommitsLatest(commits) {
+async function areCommitsLatestAndConsecutive(commits) {
+  // Get recent commits - fetch at least the number of commits we're checking
   const log = await git.log({ maxCount: commits.length });
-  const latestCommits = new Set(log.all.map(c => c.hash));
-  return commits.every(hash => latestCommits.has(hash));
-}
+  const recentCommits = log.all.map(c => c.hash);
 
-async function areCommitsConsecutive(commits) {
-  // Find the newest and oldest commits in our selection
-  const newestCommit = commits[0];
-  const oldestCommit = commits[commits.length - 1];
+  // Sort our selected commits by comparing their positions in the recent commits
+  const sortedSelectedCommits = [...commits].sort((a, b) => {
+    return recentCommits.indexOf(a) - recentCommits.indexOf(b);
+  });
 
-  // Get the log between these commits (inclusive)
-  const log = await git.log({ from: oldestCommit, to: newestCommit });
-  const allCommits = log.all.map(c => c.hash);
-  
-  // Find the indices of our commits in this range
-  const indices = commits.map(hash => allCommits.indexOf(hash)).sort((a, b) => a - b);
-  
-  // Check if any commit wasn't found
-  if (indices.includes(-1)) {
-    return false;
-  }
-  
-  // Check if the indices form a consecutive sequence
-  for (let i = 1; i < indices.length; i++) {
-    if (indices[i] - indices[i-1] !== 1) {
+  // Check if they are the latest commits
+  for (let i = 0; i < commits.length; i++) {
+    if (sortedSelectedCommits[i] !== recentCommits[i]) {
       return false;
     }
   }
+
   return true;
 }
 
 async function squashCommits(commits, message, isDryRun) {
   try {
     const oldestCommit = commits[commits.length - 1];
-    const newestCommit = commits[0];
     const status = await git.status();
     
     if (isDryRun) {
-      // Get all commits to show context
-      const allCommits = await git.log({ maxCount: 10 });
-      const commitMap = new Map(allCommits.all.map(c => [c.hash, c]));
+      // Get all commits to show context - fetch more than selected for better context
+      const log = await git.log({ maxCount: Math.max(10, commits.length + 3) });
       
       console.log(chalk.blue('\n📋 Dry Run - Squash Preview\n'));
       
       // Show current state
       console.log(chalk.yellow('Current Commits:'));
-      allCommits.all.forEach(commit => {
+      log.all.forEach(commit => {
         const isSelected = commits.includes(commit.hash);
         const prefix = isSelected ? '🔷' : '⚪️';
         const hash = commit.hash.slice(0, 7);
@@ -219,7 +205,7 @@ async function squashCommits(commits, message, isDryRun) {
 
       // Show future state
       console.log(chalk.yellow('\nAfter Squash:'));
-      allCommits.all.forEach(commit => {
+      log.all.forEach(commit => {
         const hash = commit.hash.slice(0, 7);
         if (commits.includes(commit.hash)) {
           if (commit.hash === oldestCommit) {
@@ -247,14 +233,12 @@ async function squashCommits(commits, message, isDryRun) {
       await git.stash(['save', 'temporary stash before squash']);
     }
 
-    // Check if we can use the simple approach
-    const isLatest = await areCommitsLatest(commits);
-    const isConsecutive = await areCommitsConsecutive(commits);
+    const useSimpleApproach = await areCommitsLatestAndConsecutive(commits);
 
-    if (isLatest && isConsecutive) {
+    if (useSimpleApproach) {
       await squashLatestCommits(commits, message);
     } else {
-      console.log(chalk.blue('Non consecutive commits detected. Using advanced squash approach...'));
+      console.log(chalk.yellow('\n🔄 Using advanced squash approach (non-consecutive or non-latest commits)...'));
       await squashNonConsecutiveCommits(commits, message);
     }
 
@@ -262,7 +246,7 @@ async function squashCommits(commits, message, isDryRun) {
       await git.stash(['pop']);
     }
 
-    console.log(chalk.green('✔ Successfully squashed commits!'));
+    console.log(chalk.green('\n✨ Successfully squashed commits!'));
   } catch (error) {
     console.error(chalk.red('Error during squash:'), error.message);
     process.exit(1);
