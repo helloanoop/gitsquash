@@ -1,0 +1,27 @@
+{
+  "name": "gitsquash",
+  "version": "0.0.1",
+  "description": "Interactive CLI tool to squash git commits",
+  "main": "src/index.js",
+  "bin": {
+    "gitsquash": "bin/gitsquash.js"
+  },
+  "type": "module",
+  "files": [
+    "bin",
+    "src",
+    "license.md",
+    "package.json"
+  ],
+  "scripts": {
+    "start": "node bin/gitsquash.js"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "inquirer": "^9.2.12",
+    "simple-git": "^3.22.0",
+    "commander": "^11.1.0"
+  },
+  "author": "Anoop M D",
+  "license": "MIT"
+}
