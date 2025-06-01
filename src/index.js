@@ -59,6 +59,123 @@ async function getNewCommitMessage(presetMessage) {
   return message;
 }
 
+async function squashLatestCommits(commits, message) {
+  const oldestCommit = commits[commits.length - 1];
+  
+  // Reset to the commit before the oldest commit we want to squash
+  await git.reset(['--soft', `${oldestCommit}~1`]);
+  // Create a new commit with all the changes
+  await git.commit(message);
+}
+
+async function squashNonConsecutiveCommits(commits, message) {
+  // Get the current branch name
+  const branchData = await git.branch();
+  const currentBranch = branchData.current;
+
+  // Create a temporary branch
+  const tempBranch = `temp-squash-${Date.now()}`;
+  
+  // Get all commits after our newest selected commit
+  console.log(chalk.blue('Identifying commits to preserve...'));
+  const newestSelectedCommit = commits[0];
+  const log = await git.log();
+  const laterCommits = [];
+  for (const commit of log.all) {
+    if (commit.hash === newestSelectedCommit) {
+      break;
+    }
+    laterCommits.push(commit.hash);
+  }
+
+  await git.checkout(['-b', tempBranch]);
+
+  try {
+    console.log(chalk.blue('Resetting to the commit before our earliest commit...'));
+    const oldestCommit = commits[commits.length - 1];
+    await git.reset(['--hard', `${oldestCommit}~1`]);
+
+    // Cherry pick all commits in order
+    console.log(chalk.blue('Cherry picking commits...'));
+    for (const commit of commits.reverse()) {
+      console.log(chalk.blue(`  Cherry picking commit ${commit}...`));
+      await git.raw(['cherry-pick', commit]);
+    }
+
+    // Now squash all the commits
+    console.log(chalk.blue('Squashing commits...'));
+    await git.reset(['--soft', `${oldestCommit}~1`]);
+    await git.commit(message);
+
+    // Get the new commit hash
+    console.log(chalk.blue('Getting the new commit hash...'));
+    const newCommit = await git.revparse(['HEAD']);
+
+    // Go back to original branch
+    console.log(chalk.blue('Going back to original branch...'));
+    await git.checkout([currentBranch]);
+
+    // Reset to the commit before our earliest commit
+    console.log(chalk.blue('Resetting to the commit before our earliest commit...'));
+    await git.reset(['--hard', `${oldestCommit}~1`]);
+
+    // Cherry pick our new squashed commit
+    console.log(chalk.blue('Cherry picking our new squashed commit...'));
+    await git.raw(['cherry-pick', newCommit]);
+
+    // Now cherry pick all the later commits back on top
+    if (laterCommits.length > 0) {
+      console.log(chalk.blue('Restoring newer commits...'));
+      for (const commit of laterCommits.reverse()) {
+        console.log(chalk.blue(`  Restoring commit ${commit}...`));
+        await git.raw(['cherry-pick', commit]);
+      }
+    }
+
+    // Clean up: delete temporary branch
+    console.log(chalk.blue('Deleting temporary branch...'));
+    await git.branch(['-D', tempBranch]);
+  } catch (error) {
+    // If something goes wrong, try to cleanup
+    console.log(chalk.blue('Squash failed. Cleaning up...'));
+    await git.checkout([currentBranch]);
+    await git.branch(['-D', tempBranch]).catch(() => {});
+    throw error;
+  }
+}
+
+async function areCommitsLatest(commits) {
+  const log = await git.log({ maxCount: commits.length });
+  const latestCommits = new Set(log.all.map(c => c.hash));
+  return commits.every(hash => latestCommits.has(hash));
+}
+
+async function areCommitsConsecutive(commits) {
+  // Find the newest and oldest commits in our selection
+  const newestCommit = commits[0];
+  const oldestCommit = commits[commits.length - 1];
+
+  // Get the log between these commits (inclusive)
+  const log = await git.log({ from: oldestCommit, to: newestCommit });
+  const allCommits = log.all.map(c => c.hash);
+  
+  // Find the indices of our commits in this range
+  const indices = commits.map(hash => allCommits.indexOf(hash)).sort((a, b) => a - b);
+  
+  // Check if any commit wasn't found
+  if (indices.includes(-1)) {
+    return false;
+  }
+  
+  // Check if the indices form a consecutive sequence
+  for (let i = 1; i < indices.length; i++) {
+    if (indices[i] - indices[i-1] !== 1) {
+      return false;
+    }
+  }
+  return true;
+}
+
 async function squashCommits(commits, message, isDryRun) {
   try {
     const oldestCommit = commits[commits.length - 1];
@@ -112,10 +229,16 @@ async function squashCommits(commits, message, isDryRun) {
       await git.stash(['save', 'temporary stash before squash']);
     }
 
-    // Reset to the commit before the oldest commit we want to squash
-    await git.reset(['--soft', `${oldestCommit}~1`]);
-    // Create a new commit with all the changes
-    await git.commit(message);
+    // Check if we can use the simple approach
+    const isLatest = await areCommitsLatest(commits);
+    const isConsecutive = await areCommitsConsecutive(commits);
+
+    if (isLatest && isConsecutive) {
+      await squashLatestCommits(commits, message);
+    } else {
+      console.log(chalk.blue('Non consecutive commits detected. Using advanced squash approach...'));
+      await squashNonConsecutiveCommits(commits, message);
+    }
 
     if (status.files.length > 0) {
       await git.stash(['pop']);
