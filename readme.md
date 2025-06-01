@@ -2,6 +2,8 @@
 
 An interactive CLI tool that makes git commit squashing simple and intuitive. Select multiple commits using an interactive interface, provide a new commit message, and squash them into a single commit.
 
+![demo](./assets/demo.png)
+
 ## Features
 
 - 🔍 Interactive commit selection with checkboxes
