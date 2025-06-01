@@ -66,12 +66,43 @@ async function squashCommits(commits, message, isDryRun) {
     const status = await git.status();
     
     if (isDryRun) {
-      console.log(chalk.blue('\n📋 Dry run - here\'s what would happen:'));
-      console.log(chalk.yellow(`• Squash ${commits.length} commits into one`));
-      console.log(chalk.yellow(`• New commit message: "${message}"`));
-      console.log(chalk.yellow(`• From commit: ${newestCommit.slice(0, 7)} to ${oldestCommit.slice(0, 7)}`));
+      // Get all commits to show context
+      const allCommits = await git.log({ maxCount: 10 });
+      const commitMap = new Map(allCommits.all.map(c => [c.hash, c]));
+      
+      console.log(chalk.blue('\n📋 Dry Run - Squash Preview\n'));
+      
+      // Show current state
+      console.log(chalk.yellow('Current Commits:'));
+      allCommits.all.forEach(commit => {
+        const isSelected = commits.includes(commit.hash);
+        const prefix = isSelected ? '🔷' : '⚪️';
+        const hash = commit.hash.slice(0, 7);
+        const message = commit.message.split('\n')[0];
+        console.log(`${prefix} ${chalk.dim(hash)} ${isSelected ? chalk.yellow(message) : message}`);
+      });
+
+      // Show future state
+      console.log(chalk.yellow('\nAfter Squash:'));
+      allCommits.all.forEach(commit => {
+        const hash = commit.hash.slice(0, 7);
+        if (commits.includes(commit.hash)) {
+          if (commit.hash === oldestCommit) {
+            // Show the new squashed commit
+            console.log(`🔶 ${chalk.dim('NEW')} ${chalk.green(message)}`);
+          }
+          // Skip other commits that will be squashed
+          return;
+        }
+        // Show unaffected commits
+        console.log(`⚪️ ${chalk.dim(hash)} ${commit.message.split('\n')[0]}`);
+      });
+
+      console.log(chalk.blue('\nDetails:'));
+      console.log(`• ${commits.length} commits will be squashed into one`);
+      console.log(`• New commit message: "${message}"`);
       if (status.files.length > 0) {
-        console.log(chalk.yellow('• Stash and restore uncommitted changes'));
+        console.log(`• ${status.files.length} uncommitted changes will be preserved`);
       }
       return;
     }
